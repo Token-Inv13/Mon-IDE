@@ -13,6 +13,46 @@ import Editor from '@monaco-editor/react';
 
 export default function App() {
 
+  const getLanguage = (filename) => {
+    const ext = (filename || '').toLowerCase().split('.').pop();
+    const languageMap = {
+      'js': 'javascript',
+      'jsx': 'javascript',
+      'ts': 'typescript',
+      'tsx': 'typescript',
+      'py': 'python',
+      'java': 'java',
+      'cpp': 'cpp',
+      'c': 'c',
+      'cs': 'csharp',
+      'rb': 'ruby',
+      'go': 'go',
+      'rs': 'rust',
+      'php': 'php',
+      'css': 'css',
+      'html': 'html',
+      'xml': 'xml',
+      'json': 'json',
+      'yaml': 'yaml',
+      'yml': 'yaml',
+      'md': 'markdown',
+      'sql': 'sql',
+      'sh': 'shell',
+      'bash': 'shell',
+      'dockerfile': 'dockerfile',
+      'vue': 'vue',
+      'svelte': 'svelte',
+      'dart': 'dart',
+      'kotlin': 'kotlin',
+      'swift': 'swift',
+      'scala': 'scala',
+      'r': 'r',
+      'm': 'objective-c',
+      'mm': 'objective-c',
+    };
+    return languageMap[ext] || 'plaintext';
+  };
+
   const [apiKey, setApiKey] = useState('');
   const [apiKeySaved, setApiKeySaved] = useState(false);
   const [apiKeys, setApiKeys] = useState({ claude: '', openai: '', grok: '' });

@@ -604,36 +604,74 @@ MEMOIRE MISE A JOUR:`;
   const executeTool = async (toolName, toolInput) => {
     await sleep(800);
     try {
+      if (!window.electron) {
+        throw new Error('Interface Electron non disponible - l\'application n\'est pas exécutée en mode Electron');
+      }
+
       switch (toolName) {
-        case 'read_file': return await window.electron.readFile(toolInput.path);
-        case 'write_file':
+        case 'read_file': {
+          if (!toolInput?.path) throw new Error('Chemin du fichier manquant');
+          if (!window.electron.readFile) throw new Error('Fonction readFile non disponible');
+          const content = await window.electron.readFile(toolInput.path);
+          return content || '(Fichier vide)';
+        }
+
+        case 'write_file': {
+          if (!toolInput?.path) throw new Error('Chemin du fichier manquant');
+          if (!toolInput?.content) throw new Error('Contenu du fichier manquant');
+          if (!window.electron.writeFile) throw new Error('Fonction writeFile non disponible');
+
           await window.electron.writeFile(toolInput.path, toolInput.content);
-          if (activeFile?.path === toolInput.path) onFileUpdate(toolInput.content);
-          return 'Fichier modifié avec succès';
-        case 'create_file':
-          await window.electron.writeFile(toolInput.path, toolInput.content);
-          return 'Fichier créé avec succès';
+
+          // Mettre à jour le fichier actif si c'est le même
+          if (activeFile?.path === toolInput.path && onFileUpdate) {
+            onFileUpdate(toolInput.content);
+          }
+
+          return `✅ Fichier modifié avec succès : ${toolInput.path}`;
+        }
+
+        case 'create_file': {
+          if (!toolInput?.path) throw new Error('Chemin du fichier manquant');
+          if (!window.electron.writeFile) throw new Error('Fonction writeFile non disponible');
+
+          await window.electron.writeFile(toolInput.path, toolInput.content || '');
+          return `✅ Fichier créé avec succès : ${toolInput.path}`;
+        }
+
         case 'list_files': {
+          if (!toolInput?.path) throw new Error('Chemin du dossier manquant');
+          if (!window.electron.readDirectory) throw new Error('Fonction readDirectory non disponible');
+
           const tree = await window.electron.readDirectory(toolInput.path);
           const flatten = (items, depth = 0) => {
-            if (depth > 2) return [];
+            if (depth > 3) return [];
             return items.flatMap(item => [
               '  '.repeat(depth) + (item.isDirectory ? '📁 ' : '📄 ') + item.name,
               ...(item.children ? flatten(item.children, depth + 1) : [])
             ]);
           };
           const lines = flatten(tree);
-          return lines.length > 50
-            ? lines.slice(0, 50).join('\n') + `\n... (${lines.length - 50} de plus)`
+          return lines.length > 100
+            ? lines.slice(0, 100).join('\n') + `\n... (${lines.length - 100} fichiers de plus)`
             : lines.join('\n');
         }
-        case 'run_command':
+
+        case 'run_command': {
+          if (!toolInput?.command) throw new Error('Commande manquante');
+          if (!window.electron.terminalInput) throw new Error('Fonction terminalInput non disponible');
+
           window.electron.terminalInput(toolInput.command + '\r');
-          return `Commande envoyée : ${toolInput.command}`;
-        default: return 'Outil inconnu';
+          return `✅ Commande envoyée au terminal: ${toolInput.command}`;
+        }
+
+        default:
+          return `❌ Outil inconnu : ${toolName}. Outils disponibles : read_file, write_file, create_file, list_files, run_command`;
       }
     } catch (err) {
-      return `Erreur : ${err.message}`;
+      const errorMsg = err?.message || String(err);
+      console.error(`[executeTool] Erreur pour ${toolName}:`, errorMsg);
+      return `❌ ERREUR [${toolName}]: ${errorMsg}`;
     }
   };
 
@@ -710,24 +748,59 @@ MEMOIRE MISE A JOUR:`;
         if (block.type === 'tool_use') {
           const icons = { read_file: '📖', write_file: '✏️', create_file: '✨', list_files: '📂', run_command: '🖥️' };
           const shortPath = Object.values(block.input)[0]?.toString().split('\\').pop() || '';
-          setMessages(prev => [...prev, { role: 'tool', icon: icons[block.name] || '🔧', text: `${block.name} — ${shortPath}`, status: 'running' }]);
+
+          // Ajouter le message "en cours"
+          setMessages(prev => [...prev, {
+            role: 'tool',
+            icon: icons[block.name] || '🔧',
+            text: `${block.name} — ${shortPath}`,
+            status: 'running'
+          }]);
+
+          // Exécuter l'outil
           const result = await executeTool(block.name, block.input);
+
+          // Mettre à jour le message avec le résultat
           setMessages(prev => {
             const copy = [...prev];
+            // Trouver et mettre à jour le dernier message tool
             for (let i = copy.length - 1; i >= 0; i--) {
-              if (copy[i].role === 'tool' && copy[i].status === 'running') { copy[i] = { ...copy[i], status: 'done' }; break; }
+              if (copy[i].role === 'tool' && copy[i].status === 'running') {
+                copy[i] = {
+                  ...copy[i],
+                  status: 'done',
+                  resultText: result // Afficher le résultat
+                };
+                console.log(`[Agent] Outil "${block.name}" exécuté avec succès:`, result);
+                break;
+              }
             }
             return copy;
           });
-          apiMessages.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: block.id, content: result }] });
+
+          // Envoyer le résultat à Claude
+          apiMessages.push({
+            role: 'user',
+            content: [{
+              type: 'tool_result',
+              tool_use_id: block.id,
+              content: result
+            }]
+          });
         }
       }
 
+      // Vérifier la raison d'arrêt
       if (response.stop_reason === 'end_turn') {
-        setMessages(prev => [...prev, { role: 'system', content: '✅ Tâche terminée !' }]);
+        setMessages(prev => [...prev, { role: 'system', content: '✅ Agent terminé - tâche complétée !' }]);
         break;
       }
-      if (response.stop_reason !== 'tool_use') break;
+
+      // Si pas tool_use, arrêter la boucle
+      if (response.stop_reason !== 'tool_use') {
+        console.log('[Agent] Stop reason:', response.stop_reason);
+        break;
+      }
     }
   };
 
@@ -848,15 +921,37 @@ MEMOIRE MISE A JOUR:`;
     if (msg.role === 'tool') {
       return (
         <div key={index} style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          padding: '6px 10px', margin: '4px 0',
+          display: 'flex', flexDirection: 'column', gap: 4,
+          padding: '8px 12px', margin: '8px 0',
           background: '#1e2a1e', borderRadius: 6,
-          border: '1px solid #2a3a2a', fontSize: 12
+          border: `1px solid ${msg.status === 'done' ? '#2a6a2a' : '#3a5a3a'}`,
+          fontSize: 12
         }}>
-          <span>{msg.status === 'done' ? '✅' : '⏳'}</span>
-          <span style={{ color: msg.status === 'done' ? '#4ade80' : '#fbbf24' }}>
-            {msg.icon} {msg.text}
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span>{msg.status === 'done' ? '✅' : '⏳'}</span>
+            <span style={{ color: msg.status === 'done' ? '#4ade80' : '#fbbf24', fontWeight: 'bold' }}>
+              {msg.icon} {msg.text}
+            </span>
+          </div>
+          {msg.resultText && msg.status === 'done' && (
+            <div style={{
+              marginLeft: 20,
+              padding: '6px 8px',
+              background: '#0a1f0a',
+              borderRadius: 4,
+              border: '1px solid #1a3a1a',
+              fontSize: 11,
+              fontFamily: 'monospace',
+              color: '#6ee7b7',
+              maxHeight: '100px',
+              overflow: 'auto',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word'
+            }}>
+              {msg.resultText.substring(0, 500)}
+              {msg.resultText.length > 500 && '...'}
+            </div>
+          )}
         </div>
       );
     }
