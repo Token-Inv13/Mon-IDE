@@ -448,11 +448,12 @@ const Chat = forwardRef(function Chat({
 
   const buildSystemPrompt = (userTextForBudget = '') => {
     let prompt = mode === 'agent'
-      ? `Tu es un agent de développement autonome expert. Tu as accès à des outils pour lire, créer et modifier des fichiers.
-- Explore la structure du projet si nécessaire
-- Lis les fichiers avant de les modifier
-- Explique chaque action
-- Réponds en français`
+      ? `Tu es un agent de développement autonome expert. Tu as ACCÈS DIRECT aux outils listés et TU DOIS LES UTILISER pour accomplir les tâches.
+    - Quand tu exécutes une tâche, APPELLE L'OUTIL approprié (read_file, write_file, create_file, list_files, run_command) au lieu de seulement décrire ce que tu ferais.
+    - Pour OpenAI: utilise le mécanisme de function-calling (appelle les fonctions fournies).
+    - Commence par lister les fichiers si nécessaire, lis les fichiers pertinents avant de les modifier.
+    - Explique chaque action succinctement après son exécution.
+    - Réponds en français.`
       : `Tu es un assistant de développement expert intégré dans un IDE.
 Quand tu modifies du code, écris TOUJOURS le fichier complet entre balises <file>contenu</file>.
 Sois concis et précis. Réponds en français.`;
@@ -838,24 +839,38 @@ MEMOIRE MISE A JOUR:`;
         // Retry logic for rate limits
         while (retries < 3) {
           try {
+            // OpenAI expects the system prompt as a message and functions under `functions`.
+            const functions = openaiTools.map(t => t.function);
             response = await client.chat.completions.create({
               model,
               max_tokens: 4096,
-              system: systemPrompt,
-              tools: openaiTools,
-              messages: apiMessages.map(m => ({
-                role: m.role,
-                content: m.content,
-                ...(m.tool_calls && { tool_calls: m.tool_calls })
-              }))
+              temperature: 0,
+              function_call: 'auto',
+              functions,
+              messages: [
+                { role: 'system', content: systemPrompt },
+                ...apiMessages.map(m => ({
+                  role: m.role,
+                  content: m.content,
+                  ...(m.tool_calls && { tool_calls: m.tool_calls })
+                }))
+              ]
             });
             break;
           } catch (err) {
+            // Rate limit retry
             if (err.message?.includes('rate_limit') && retries < 2) {
               retries++;
               setMessages(prev => [...prev, { role: 'system', content: `⏳ Pause ${retries * 15}s...` }]);
               await sleep(retries * 15000);
-            } else throw err;
+            } else {
+              // Surface model access errors with clearer guidance
+              if (err.message?.includes('does not have access to model') || err.message?.includes('Access denied')) {
+                setMessages(prev => [...prev, { role: 'assistant', content: `❌ Erreur d'accès au modèle OpenAI: ${err.message}. Vérifiez que la clé API utilisée a accès au modèle sélectionné ou changez de modèle dans le menu.` }]);
+                return;
+              }
+              throw err;
+            }
           }
         }
 
@@ -921,7 +936,18 @@ MEMOIRE MISE A JOUR:`;
         }
 
         // Vérifier la raison d'arrêt
-        if (response.choices[0].finish_reason === 'stop' || !assistantMessage.tool_calls) {
+        const finishReason = response.choices[0].finish_reason;
+        if (finishReason === 'stop') {
+          if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
+            // Le modèle n'a pas utilisé les outils — demander explicitement une action via outils et relancer
+            if (iteration < maxIterations - 1) {
+              setMessages(prev => [...prev, { role: 'system', content: '⚠️ Le modèle a répondu sans appeler les outils. Je lui demande d\'exécuter maintenant les actions en appelant les outils disponibles.' }]);
+              apiMessages.push({ role: 'user', content: 'Veuillez maintenant exécuter les actions en appelant les outils fournis (read_file, write_file, create_file, list_files, run_command). N\'expliquez pas seulement, exécutez.' });
+              continue;
+            }
+            setMessages(prev => [...prev, { role: 'system', content: '✅ Agent terminé - tâche complétée (fin de tentatives).' }]);
+            break;
+          }
           setMessages(prev => [...prev, { role: 'system', content: '✅ Agent terminé - tâche complétée !' }]);
           break;
         }
