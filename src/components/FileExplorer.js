@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import PropTypes from 'prop-types';
 
 /**
  * FileExplorer amélioré :
@@ -293,3 +294,25 @@ export default function FileExplorer({ files, onFileClick, activeFile, onRefresh
     </div>
   );
 }
+
+FileExplorer.propTypes = {
+  files: PropTypes.arrayOf(PropTypes.object),
+  onFileClick: PropTypes.func,
+  activeFile: PropTypes.object,
+  onRefresh: PropTypes.func,
+  dirtyPaths: PropTypes.arrayOf(PropTypes.string),
+  addToast: PropTypes.func,
+  selectedItem: PropTypes.object,
+  onSelectItem: PropTypes.func,
+};
+
+FileExplorer.defaultProps = {
+  files: [],
+  onFileClick: null,
+  activeFile: null,
+  onRefresh: null,
+  dirtyPaths: [],
+  addToast: null,
+  selectedItem: null,
+  onSelectItem: null,
+};

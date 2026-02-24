@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import PropTypes from 'prop-types';
 
 export default function Terminal({ isVisible, projectPath }) {
   const terminalRef = useRef(null);
@@ -102,3 +103,13 @@ export default function Terminal({ isVisible, projectPath }) {
     </div>
   );
 }
+
+Terminal.propTypes = {
+  isVisible: PropTypes.bool,
+  projectPath: PropTypes.string,
+};
+
+Terminal.defaultProps = {
+  isVisible: false,
+  projectPath: '',
+};

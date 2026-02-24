@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo, forwardRef, useImperativeHandle } from 'react';
+import PropTypes from 'prop-types';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import MessageRenderer from './MessageRenderer';
@@ -783,7 +784,6 @@ MEMOIRE MISE A JOUR:`;
                   status: 'done',
                   resultText: result // Afficher le résultat
                 };
-                console.log(`[Agent] Outil "${block.name}" exécuté avec succès:`, result);
                 break;
               }
             }
@@ -810,7 +810,8 @@ MEMOIRE MISE A JOUR:`;
 
       // Si pas tool_use, arrêter la boucle
       if (response.stop_reason !== 'tool_use') {
-        console.log('[Agent] Stop reason:', response.stop_reason);
+        // stop_reason may be used for diagnostics; avoid noisy console output in production
+        // console.debug('[Agent] Stop reason:', response.stop_reason);
         break;
       }
     }
@@ -874,7 +875,7 @@ MEMOIRE MISE A JOUR:`;
 
         // Traiter les appels d'outils
         if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
-          for (const toolCall of assistantMessage.tool_calls) {
+            for (const toolCall of assistantMessage.tool_calls) {
             const toolName = toolCall.function.name;
             const icons = { read_file: '📖', write_file: '✏️', create_file: '✨', list_files: '📂', run_command: '🖥️' };
             const toolInput = JSON.parse(toolCall.function.arguments);
@@ -901,18 +902,20 @@ MEMOIRE MISE A JOUR:`;
                     status: 'done',
                     resultText: result
                   };
-                  console.log(`[Agent OpenAI] Outil "${toolName}" exécuté:`, result);
                   break;
                 }
               }
               return copy;
             });
 
-            // Envoyer le résultat à OpenAI
+            // Envoyer le résultat à OpenAI dans un format compatible avec Claude (tool_result)
             apiMessages.push({
-              role: 'tool',
-              tool_call_id: toolCall.id,
-              content: result
+              role: 'user',
+              content: [{
+                type: 'tool_result',
+                tool_use_id: toolCall.id,
+                content: result
+              }]
             });
           }
         }
@@ -1503,3 +1506,36 @@ MEMOIRE MISE A JOUR:`;
 });
 
 export default Chat;
+
+Chat.propTypes = {
+  apiKeys: PropTypes.shape({
+    claude: PropTypes.string,
+    openai: PropTypes.string,
+    grok: PropTypes.string,
+  }),
+  activeFile: PropTypes.shape({
+    path: PropTypes.string,
+    name: PropTypes.string,
+  }),
+  fileContent: PropTypes.string,
+  projectPath: PropTypes.string,
+  onFileUpdate: PropTypes.func,
+  onProposeFileUpdate: PropTypes.func,
+  initialProvider: PropTypes.string,
+  initialModel: PropTypes.string,
+  onProviderModelChange: PropTypes.func,
+  budgetOverrides: PropTypes.object,
+};
+
+Chat.defaultProps = {
+  apiKeys: { claude: '', openai: '', grok: '' },
+  activeFile: null,
+  fileContent: '',
+  projectPath: '',
+  onFileUpdate: null,
+  onProposeFileUpdate: null,
+  initialProvider: null,
+  initialModel: null,
+  onProviderModelChange: null,
+  budgetOverrides: null,
+};

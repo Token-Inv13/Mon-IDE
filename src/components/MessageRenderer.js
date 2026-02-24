@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import PropTypes from 'prop-types';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
@@ -152,3 +153,11 @@ function renderInlineMarkdown(text) {
   if (last < text.length) parts.push(text.slice(last));
   return parts.length > 0 ? parts : text;
 }
+
+MessageRenderer.propTypes = {
+  content: PropTypes.string,
+};
+
+MessageRenderer.defaultProps = {
+  content: '',
+};

@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import PropTypes from 'prop-types';
 import Anthropic from '@anthropic-ai/sdk';
 
 const AGENT_TOOLS = [
@@ -334,3 +335,17 @@ Ex: Optimise les performances du projet"
     </div>
   );
 }
+
+Agent.propTypes = {
+  projectPath: PropTypes.string,
+  apiKey: PropTypes.string,
+  onFileUpdate: PropTypes.func,
+  activeFile: PropTypes.shape({ path: PropTypes.string, name: PropTypes.string }),
+};
+
+Agent.defaultProps = {
+  projectPath: '',
+  apiKey: '',
+  onFileUpdate: null,
+  activeFile: null,
+};
