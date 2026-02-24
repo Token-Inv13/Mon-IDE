@@ -93,6 +93,18 @@ const AGENT_TOOLS = [
   }
 ];
 
+// Convertir les tools du format Claude au format OpenAI
+const convertToolsToOpenAI = (tools) => {
+  return tools.map(tool => ({
+    type: 'function',
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.input_schema // Renommer input_schema → parameters
+    }
+  }));
+};
+
 const MODES = [
   { id: 'chat', label: 'Chat', icon: '💬', description: 'Claude répond et suggère' },
   { id: 'agent', label: 'Agent', icon: '🤖', description: 'Claude agit et modifie les fichiers' },
@@ -804,7 +816,7 @@ MEMOIRE MISE A JOUR:`;
     }
   };
 
-  const sendWithOpenAI = async (apiMessages, systemPrompt) => {
+  const sendWithOpenAI = async (apiMessages, systemPrompt, isAgent) => {
     const isGrok = provider === 'grok';
     const client = new OpenAI({
       apiKey: isGrok ? apiKeys?.grok : apiKeys?.openai,
@@ -812,6 +824,109 @@ MEMOIRE MISE A JOUR:`;
       dangerouslyAllowBrowser: true
     });
 
+    // Mode Agent (OpenAI only, not Grok)
+    if (isAgent && !isGrok) {
+      const openaiTools = convertToolsToOpenAI(AGENT_TOOLS);
+      let iteration = 0;
+
+      while (iteration < 20) {
+        iteration++;
+        let response;
+        let retries = 0;
+
+        // Retry logic for rate limits
+        while (retries < 3) {
+          try {
+            response = await client.chat.completions.create({
+              model,
+              max_tokens: 4096,
+              system: systemPrompt,
+              tools: openaiTools,
+              messages: apiMessages.map(m => ({
+                role: m.role,
+                content: m.content,
+                ...(m.tool_calls && { tool_calls: m.tool_calls })
+              }))
+            });
+            break;
+          } catch (err) {
+            if (err.message?.includes('rate_limit') && retries < 2) {
+              retries++;
+              setMessages(prev => [...prev, { role: 'system', content: `⏳ Pause ${retries * 15}s...` }]);
+              await sleep(retries * 15000);
+            } else throw err;
+          }
+        }
+
+        const assistantMessage = response.choices[0].message;
+
+        // Ajouter le message de l'assistant aux messages de la conversation
+        apiMessages.push({
+          role: 'assistant',
+          content: assistantMessage.content,
+          tool_calls: assistantMessage.tool_calls
+        });
+
+        // Afficher le texte de réponse s'il existe
+        if (assistantMessage.content?.trim()) {
+          setMessages(prev => [...prev, { role: 'assistant', content: assistantMessage.content }]);
+        }
+
+        // Traiter les appels d'outils
+        if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
+          for (const toolCall of assistantMessage.tool_calls) {
+            const toolName = toolCall.function.name;
+            const icons = { read_file: '📖', write_file: '✏️', create_file: '✨', list_files: '📂', run_command: '🖥️' };
+            const toolInput = JSON.parse(toolCall.function.arguments);
+            const shortPath = Object.values(toolInput)[0]?.toString().split('\\').pop() || '';
+
+            // Afficher le message "en cours"
+            setMessages(prev => [...prev, {
+              role: 'tool',
+              icon: icons[toolName] || '🔧',
+              text: `${toolName} — ${shortPath}`,
+              status: 'running'
+            }]);
+
+            // Exécuter l'outil
+            const result = await executeTool(toolName, toolInput);
+
+            // Mettre à jour le message avec le résultat
+            setMessages(prev => {
+              const copy = [...prev];
+              for (let i = copy.length - 1; i >= 0; i--) {
+                if (copy[i].role === 'tool' && copy[i].status === 'running') {
+                  copy[i] = {
+                    ...copy[i],
+                    status: 'done',
+                    resultText: result
+                  };
+                  console.log(`[Agent OpenAI] Outil "${toolName}" exécuté:`, result);
+                  break;
+                }
+              }
+              return copy;
+            });
+
+            // Envoyer le résultat à OpenAI
+            apiMessages.push({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              content: result
+            });
+          }
+        }
+
+        // Vérifier la raison d'arrêt
+        if (response.choices[0].finish_reason === 'stop' || !assistantMessage.tool_calls) {
+          setMessages(prev => [...prev, { role: 'system', content: '✅ Agent terminé - tâche complétée !' }]);
+          break;
+        }
+      }
+      return;
+    }
+
+    // Mode Chat (streaming) - comportement par défaut
     let fullResponse = '';
     setMessages(prev => [...prev, { role: 'assistant', content: '...' }]);
 
@@ -900,7 +1015,8 @@ MEMOIRE MISE A JOUR:`;
       if (provider === 'claude') {
         await sendWithClaude(apiMessages, systemPrompt, mode === 'agent');
       } else {
-        await sendWithOpenAI(apiMessages, systemPrompt);
+        const isAgentMode = mode === 'agent' && provider !== 'grok';
+        await sendWithOpenAI(apiMessages, systemPrompt, isAgentMode);
       }
     } catch (error) {
       setMessages(prev => [...prev, { role: 'assistant', content: `❌ Erreur : ${error.message}` }]);
