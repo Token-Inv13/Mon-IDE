@@ -44,9 +44,8 @@
     "win": {
       "target": "nsis",
       "icon": "public/icon.ico",
-      "signingHashAlgorithms": [],
       "sign": null,
-      "artifactName": "${productName}-Setup-${version}-${target}-${arch}.${ext}"
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
