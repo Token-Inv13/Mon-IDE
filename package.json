@@ -1,6 +1,6 @@
 {
   "name": "mon-ide-claude",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "IDE local propulsé par Claude AI",
   "main": "main.js",
   "homepage": "./",
@@ -9,7 +9,10 @@
     "electron-start": "electron .",
     "start": "concurrently \"npm run react-start\" \"wait-on http://localhost:3000 && npm run electron-start\"",
     "build": "react-scripts build",
-    "package": "npm run build && electron-builder build --win"
+    "package": "npm run clean:dist && npm run build && electron-builder build --win",
+    "clean:dist": "node -e require('fs').rmSync('dist',{recursive:true,force:true})",
+    "package:win": "npm run clean:dist && npm run build && electron-builder --win --x64",
+    "package:win:dir": "npm run clean:dist && npm run build && electron-builder --win --x64 --dir"
   },
   "browserslist": {
     "production": [
@@ -42,7 +45,8 @@
       "target": "nsis",
       "icon": "public/icon.ico",
       "signingHashAlgorithms": [],
-      "sign": null
+      "sign": null,
+      "artifactName": "${productName}-Setup-${version}-${target}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
