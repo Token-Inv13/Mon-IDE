@@ -6,12 +6,51 @@ const configPath = path.join(app.getPath('userData'), 'config.json');
 const logPath = path.join(app.getPath('userData'), 'main.log');
 const conversationsPath = path.join(app.getPath('userData'), 'conversations.json');
 const projectMemoryPath = path.join(app.getPath('userData'), 'project_memory.json');
+const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5 MB
+const MAX_LOG_BACKUPS = 5;
 
 function log(line) {
   try {
-    fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${String(line)}\n`, 'utf-8');
+    const out = `[${new Date().toISOString()}] ${String(line)}\n`;
+
+    try {
+      // Rotate if too large
+      if (fs.existsSync(logPath)) {
+        const st = fs.statSync(logPath);
+        if (st.size >= MAX_LOG_SIZE) {
+          // Rotate backups: main.log.4 -> main.log.5, etc.
+          for (let i = MAX_LOG_BACKUPS - 1; i >= 1; i--) {
+            const src = `${logPath}.${i}`;
+            const dst = `${logPath}.${i + 1}`;
+            if (fs.existsSync(src)) {
+              try { fs.renameSync(src, dst); } catch (e) { /* ignore */ }
+            }
+          }
+          // Move current to .1
+          try { fs.renameSync(logPath, `${logPath}.1`); } catch (e) { /* ignore */ }
+        }
+      }
+    } catch (e) {
+      // ignore rotation errors
+    }
+
+    fs.appendFileSync(logPath, out, 'utf-8');
+    // Also echo to console for live debugging
+    try { console.log(out.trim()); } catch (e) {}
   } catch (e) {}
 }
+
+// Audit log from renderer: level, message, optional meta
+ipcMain.handle('audit-log', (event, level, message, meta) => {
+  try {
+    const metaStr = meta ? ` ${JSON.stringify(meta)}` : '';
+    log(`[AUDIT] ${level || 'info'}: ${message}${metaStr}`);
+    return true;
+  } catch (e) {
+    log(`audit-log error: ${e?.message || e}`);
+    return false;
+  }
+});
 
 function getConfig() {
   try {
@@ -315,13 +354,31 @@ ipcMain.handle('read-file', (event, filePath) => {
 });
 
 ipcMain.handle('write-file', (event, filePath, content) => {
-  fs.writeFileSync(filePath, content, 'utf-8');
-  return true;
+  try {
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const tmp = path.join(dir, `.tmp-${Date.now()}-${path.basename(filePath)}`);
+    fs.writeFileSync(tmp, content, 'utf-8');
+    fs.renameSync(tmp, filePath);
+    return true;
+  } catch (e) {
+    log(`write-file error: ${e?.message || e}`);
+    throw e;
+  }
 });
 
 ipcMain.handle('create-file', (event, filePath) => {
-  fs.writeFileSync(filePath, '', 'utf-8');
-  return true;
+  try {
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const tmp = path.join(dir, `.tmp-${Date.now()}-${path.basename(filePath)}`);
+    fs.writeFileSync(tmp, '', 'utf-8');
+    fs.renameSync(tmp, filePath);
+    return true;
+  } catch (e) {
+    log(`create-file error: ${e?.message || e}`);
+    throw e;
+  }
 });
 
 ipcMain.handle('delete-file', (event, filePath) => {

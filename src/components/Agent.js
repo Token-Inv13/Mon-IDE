@@ -1,66 +1,9 @@
 import React, { useState, useRef } from 'react';
 import PropTypes from 'prop-types';
 import Anthropic from '@anthropic-ai/sdk';
-
-const AGENT_TOOLS = [
-  {
-    name: 'read_file',
-    description: 'Lire le contenu d\'un fichier du projet',
-    input_schema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'Chemin absolu du fichier à lire' }
-      },
-      required: ['path']
-    }
-  },
-  {
-    name: 'write_file',
-    description: 'Écrire ou modifier un fichier du projet',
-    input_schema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'Chemin absolu du fichier' },
-        content: { type: 'string', description: 'Contenu complet du fichier' }
-      },
-      required: ['path', 'content']
-    }
-  },
-  {
-    name: 'create_file',
-    description: 'Créer un nouveau fichier',
-    input_schema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'Chemin absolu du nouveau fichier' },
-        content: { type: 'string', description: 'Contenu initial du fichier' }
-      },
-      required: ['path', 'content']
-    }
-  },
-  {
-    name: 'list_files',
-    description: 'Lister les fichiers d\'un dossier',
-    input_schema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'Chemin du dossier à lister' }
-      },
-      required: ['path']
-    }
-  },
-  {
-    name: 'run_command',
-    description: 'Exécuter une commande dans le terminal',
-    input_schema: {
-      type: 'object',
-      properties: {
-        command: { type: 'string', description: 'Commande à exécuter' }
-      },
-      required: ['command']
-    }
-  }
-];
+import { AGENT_TOOLS } from '../agentTools';
+import executeTool from '../utils/executeTool';
+import safeContent from '../utils/safeContent';
 
 export default function Agent({ projectPath, apiKey, onFileUpdate, activeFile }) {
   const [task, setTask] = useState('');
@@ -85,51 +28,7 @@ export default function Agent({ projectPath, apiKey, onFileUpdate, activeFile })
     setSteps(prev => prev.map(s => s.id === id ? { ...s, status } : s));
   };
 
-  const executeTool = async (toolName, toolInput) => {
-    try {
-      switch (toolName) {
-        case 'read_file': {
-          const content = await window.electron.readFile(toolInput.path);
-          addLog('tool', `📖 Lu : ${toolInput.path}`);
-          return content;
-        }
-        case 'write_file': {
-          await window.electron.writeFile(toolInput.path, toolInput.content);
-          addLog('tool', `✏️ Modifié : ${toolInput.path}`);
-          if (activeFile && activeFile.path === toolInput.path) {
-            onFileUpdate(toolInput.content);
-          }
-          return 'Fichier modifié avec succès';
-        }
-        case 'create_file': {
-          await window.electron.writeFile(toolInput.path, toolInput.content);
-          addLog('tool', `✨ Créé : ${toolInput.path}`);
-          return 'Fichier créé avec succès';
-        }
-        case 'list_files': {
-          const tree = await window.electron.readDirectory(toolInput.path);
-          const flatten = (items, depth = 0) =>
-            items.flatMap(item => [
-              '  '.repeat(depth) + (item.isDirectory ? '📁 ' : '📄 ') + item.name,
-              ...(item.children ? flatten(item.children, depth + 1) : [])
-            ]);
-          const result = flatten(tree).join('\n');
-          addLog('tool', `📂 Listé : ${toolInput.path}`);
-          return result;
-        }
-        case 'run_command': {
-          addLog('tool', `🖥️ Commande : ${toolInput.command}`);
-          window.electron.terminalInput(toolInput.command + '\r');
-          return `Commande envoyée au terminal : ${toolInput.command}`;
-        }
-        default:
-          return 'Outil inconnu';
-      }
-    } catch (err) {
-      addLog('error', `❌ Erreur : ${err.message}`);
-      return `Erreur : ${err.message}`;
-    }
-  };
+  // executeTool is provided by src/utils/executeTool and imported above
 
   const runAgent = async () => {
     if (!task.trim() || isRunning) return;
@@ -141,7 +40,8 @@ export default function Agent({ projectPath, apiKey, onFileUpdate, activeFile })
     setIsRunning(true);
     setLogs([]);
     setSteps([]);
-    addLog('start', `🚀 Démarrage de la tâche : ${task}`);
+      addLog('start', `🚀 Démarrage de la tâche : ${task}`);
+      window.electron?.auditLog && window.electron.auditLog('info', 'Agent start', { task: task, projectPath, activeFile: activeFile?.path });
 
     const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
 
@@ -160,7 +60,7 @@ Instructions :
 - Sois méthodique et précis
 - Réponds en français`;
 
-    const messages = [{ role: 'user', content: task }];
+    const messages = [{ role: 'user', content: safeContent(task) }];
     let iteration = 0;
     const maxIterations = 20;
 
@@ -168,6 +68,7 @@ Instructions :
       while (iteration < maxIterations) {
         iteration++;
         addLog('info', `🔄 Itération ${iteration}...`);
+        window.electron?.auditLog && window.electron.auditLog('info', 'Agent iteration', { iteration, task });
 
         let response;
         // Only use the simulated fallback when running tests (NODE_ENV === 'test')
@@ -194,12 +95,13 @@ Instructions :
           });
         }
 
-        // Ajouter la réponse à l'historique
-        messages.push({ role: 'assistant', content: response.content });
+        // Ajouter la réponse à l'historique (coerce content en chaîne sûre)
+        const respContentSafe = safeContent(response.content);
+        messages.push({ role: 'assistant', content: respContentSafe });
 
         // Traiter les blocs de contenu
         for (const block of response.content) {
-          if (block.type === 'text' && block.text.trim()) {
+          if (block.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
             addLog('claude', `🤖 ${block.text}`);
           }
 
@@ -212,7 +114,12 @@ Instructions :
               `${block.name} : ${Object.values(block.input)[0]?.substring(0, 40)}...`
             );
 
-            const result = await executeTool(block.name, block.input);
+            window.electron?.auditLog && window.electron.auditLog('info', 'Agent tool_use', { tool: block.name, input: safeContent(block.input) });
+            const toolResult = await executeTool(block.name, block.input, { addLog, onFileUpdate, activeFile });
+            window.electron?.auditLog && window.electron.auditLog('info', 'Agent tool_result', { tool: block.name, result: safeContent(toolResult) });
+            const resultOutput = (toolResult && toolResult.output !== undefined && toolResult.output !== null)
+              ? toolResult.output
+              : (toolResult && toolResult.error ? `Erreur: ${toolResult.error}` : '');
             updateStep(stepId, 'done');
 
             // Ajouter le résultat de l'outil
@@ -221,7 +128,7 @@ Instructions :
               content: [{
                 type: 'tool_result',
                 tool_use_id: block.id,
-                content: result
+                content: resultOutput
               }]
             });
           }
@@ -230,6 +137,7 @@ Instructions :
         // Arrêter si Claude a fini
         if (response.stop_reason === 'end_turn') {
           addLog('success', '✅ Tâche terminée avec succès !');
+          window.electron?.auditLog && window.electron.auditLog('info', 'Agent finished', { task });
           break;
         }
 
@@ -245,6 +153,7 @@ Instructions :
 
     } catch (err) {
       addLog('error', `❌ Erreur agent : ${err.message}`);
+      window.electron?.auditLog && window.electron.auditLog('error', `Agent error: ${err.message}`, { task });
     } finally {
       setIsRunning(false);
     }

@@ -3,6 +3,9 @@ import PropTypes from 'prop-types';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import MessageRenderer from './MessageRenderer';
+import safeContent from '../utils/safeContent';
+import { AGENT_TOOLS } from '../agentTools';
+import executeTool from '../utils/executeTool';
 
 const PROVIDERS = [
   {
@@ -40,59 +43,6 @@ const PROVIDERS = [
   }
 ];
 
-const AGENT_TOOLS = [
-  {
-    name: 'read_file',
-    description: 'Lire le contenu d\'un fichier du projet',
-    input_schema: {
-      type: 'object',
-      properties: { path: { type: 'string', description: 'Chemin absolu du fichier' } },
-      required: ['path']
-    }
-  },
-  {
-    name: 'write_file',
-    description: 'Écrire ou modifier un fichier',
-    input_schema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'Chemin absolu du fichier' },
-        content: { type: 'string', description: 'Contenu complet du fichier' }
-      },
-      required: ['path', 'content']
-    }
-  },
-  {
-    name: 'create_file',
-    description: 'Créer un nouveau fichier',
-    input_schema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'Chemin absolu' },
-        content: { type: 'string', description: 'Contenu initial' }
-      },
-      required: ['path', 'content']
-    }
-  },
-  {
-    name: 'list_files',
-    description: 'Lister les fichiers d\'un dossier',
-    input_schema: {
-      type: 'object',
-      properties: { path: { type: 'string', description: 'Chemin du dossier' } },
-      required: ['path']
-    }
-  },
-  {
-    name: 'run_command',
-    description: 'Exécuter une commande terminal',
-    input_schema: {
-      type: 'object',
-      properties: { command: { type: 'string', description: 'Commande à exécuter' } },
-      required: ['command']
-    }
-  }
-];
 
 // Convertir les tools du format Claude au format OpenAI
 const convertToolsToOpenAI = (tools) => {
@@ -615,79 +565,7 @@ MEMOIRE MISE A JOUR:`;
     return match ? match[1] : null;
   };
 
-  const executeTool = async (toolName, toolInput) => {
-    await sleep(800);
-    try {
-      if (!window.electron) {
-        throw new Error('Interface Electron non disponible - l\'application n\'est pas exécutée en mode Electron');
-      }
-
-      switch (toolName) {
-        case 'read_file': {
-          if (!toolInput?.path) throw new Error('Chemin du fichier manquant');
-          if (!window.electron.readFile) throw new Error('Fonction readFile non disponible');
-          const content = await window.electron.readFile(toolInput.path);
-          return content || '(Fichier vide)';
-        }
-
-        case 'write_file': {
-          if (!toolInput?.path) throw new Error('Chemin du fichier manquant');
-          if (!toolInput?.content) throw new Error('Contenu du fichier manquant');
-          if (!window.electron.writeFile) throw new Error('Fonction writeFile non disponible');
-
-          await window.electron.writeFile(toolInput.path, toolInput.content);
-
-          // Mettre à jour le fichier actif si c'est le même
-          if (activeFile?.path === toolInput.path && onFileUpdate) {
-            onFileUpdate(toolInput.content);
-          }
-
-          return `✅ Fichier modifié avec succès : ${toolInput.path}`;
-        }
-
-        case 'create_file': {
-          if (!toolInput?.path) throw new Error('Chemin du fichier manquant');
-          if (!window.electron.writeFile) throw new Error('Fonction writeFile non disponible');
-
-          await window.electron.writeFile(toolInput.path, toolInput.content || '');
-          return `✅ Fichier créé avec succès : ${toolInput.path}`;
-        }
-
-        case 'list_files': {
-          if (!toolInput?.path) throw new Error('Chemin du dossier manquant');
-          if (!window.electron.readDirectory) throw new Error('Fonction readDirectory non disponible');
-
-          const tree = await window.electron.readDirectory(toolInput.path);
-          const flatten = (items, depth = 0) => {
-            if (depth > 3) return [];
-            return items.flatMap(item => [
-              '  '.repeat(depth) + (item.isDirectory ? '📁 ' : '📄 ') + item.name,
-              ...(item.children ? flatten(item.children, depth + 1) : [])
-            ]);
-          };
-          const lines = flatten(tree);
-          return lines.length > 100
-            ? lines.slice(0, 100).join('\n') + `\n... (${lines.length - 100} fichiers de plus)`
-            : lines.join('\n');
-        }
-
-        case 'run_command': {
-          if (!toolInput?.command) throw new Error('Commande manquante');
-          if (!window.electron.terminalInput) throw new Error('Fonction terminalInput non disponible');
-
-          window.electron.terminalInput(toolInput.command + '\r');
-          return `✅ Commande envoyée au terminal: ${toolInput.command}`;
-        }
-
-        default:
-          return `❌ Outil inconnu : ${toolName}. Outils disponibles : read_file, write_file, create_file, list_files, run_command`;
-      }
-    } catch (err) {
-      const errorMsg = err?.message || String(err);
-      console.error(`[executeTool] Erreur pour ${toolName}:`, errorMsg);
-      return `❌ ERREUR [${toolName}]: ${errorMsg}`;
-    }
-  };
+  // executeTool behavior is provided by src/utils/executeTool
 
   const sendWithClaude = async (apiMessages, systemPrompt, isAgent) => {
     const apiKey = apiKeys?.claude;
@@ -726,6 +604,8 @@ MEMOIRE MISE A JOUR:`;
           await window.electron.writeFile(activeFile.path, newFileContent);
         }
       }
+      // Audit assistant response (non-agent)
+      window.electron?.auditLog && window.electron.auditLog('info', 'Claude response', { provider: 'claude', preview: safeContent(fullResponse).slice(0, 200) });
       return;
     }
 
@@ -772,7 +652,13 @@ MEMOIRE MISE A JOUR:`;
           }]);
 
           // Exécuter l'outil
+          window.electron?.auditLog && window.electron.auditLog('info', 'Chat tool_use', { tool: block.name, input: safeContent(block.input) });
           const result = await executeTool(block.name, block.input);
+          const resultOutput = (result && typeof result === 'object')
+            ? (result.output !== undefined && result.output !== null ? result.output : (result.error || ''))
+            : (result || '');
+
+          window.electron?.auditLog && window.electron.auditLog('info', 'Chat tool_result', { tool: block.name, result: safeContent(result) });
 
           // Mettre à jour le message avec le résultat
           setMessages(prev => {
@@ -783,7 +669,7 @@ MEMOIRE MISE A JOUR:`;
                 copy[i] = {
                   ...copy[i],
                   status: 'done',
-                  resultText: result // Afficher le résultat
+                  resultText: resultOutput // Afficher le résultat
                 };
                 break;
               }
@@ -797,7 +683,7 @@ MEMOIRE MISE A JOUR:`;
             content: [{
               type: 'tool_result',
               tool_use_id: block.id,
-              content: result
+              content: resultOutput
             }]
           });
         }
@@ -830,8 +716,9 @@ MEMOIRE MISE A JOUR:`;
     if (isAgent && !isGrok) {
       const openaiTools = convertToolsToOpenAI(AGENT_TOOLS);
       let iteration = 0;
+      const maxIterations = 20;
 
-      while (iteration < 20) {
+      while (iteration < maxIterations) {
         iteration++;
         let response;
         let retries = 0;
@@ -851,7 +738,7 @@ MEMOIRE MISE A JOUR:`;
                 { role: 'system', content: systemPrompt },
                 ...apiMessages.map(m => ({
                   role: m.role,
-                  content: m.content,
+                  content: safeContent(m.content),
                   ...(m.tool_calls && { tool_calls: m.tool_calls })
                 }))
               ]
@@ -876,15 +763,18 @@ MEMOIRE MISE A JOUR:`;
 
         const assistantMessage = response.choices[0].message;
 
+        // Safely coerce assistant content to a string for our messages array
+        const assistantContentSafe = safeContent(assistantMessage.content);
+
         // Ajouter le message de l'assistant aux messages de la conversation
         apiMessages.push({
           role: 'assistant',
-          content: assistantMessage.content,
+          content: assistantContentSafe,
           tool_calls: assistantMessage.tool_calls
         });
 
-        // Afficher le texte de réponse s'il existe
-        if (assistantMessage.content?.trim()) {
+        // Afficher le texte de réponse s'il existe (ne tenter trim() que sur des chaînes)
+        if (typeof assistantMessage.content === 'string' && assistantMessage.content.trim()) {
           setMessages(prev => [...prev, { role: 'assistant', content: assistantMessage.content }]);
         }
 
@@ -905,7 +795,13 @@ MEMOIRE MISE A JOUR:`;
             }]);
 
             // Exécuter l'outil
+            window.electron?.auditLog && window.electron.auditLog('info', 'Chat tool_use', { tool: toolName, input: safeContent(toolInput) });
             const result = await executeTool(toolName, toolInput);
+            const resultOutput = (result && typeof result === 'object')
+              ? (result.output !== undefined && result.output !== null ? result.output : (result.error || ''))
+              : (result || '');
+
+            window.electron?.auditLog && window.electron.auditLog('info', 'Chat tool_result', { tool: toolName, result: safeContent(result) });
 
             // Mettre à jour le message avec le résultat
             setMessages(prev => {
@@ -915,7 +811,7 @@ MEMOIRE MISE A JOUR:`;
                   copy[i] = {
                     ...copy[i],
                     status: 'done',
-                    resultText: result
+                    resultText: resultOutput
                   };
                   break;
                 }
@@ -929,7 +825,7 @@ MEMOIRE MISE A JOUR:`;
               content: [{
                 type: 'tool_result',
                 tool_use_id: toolCall.id,
-                content: result
+                content: resultOutput
               }]
             });
           }
@@ -964,7 +860,7 @@ MEMOIRE MISE A JOUR:`;
       stream: true,
       messages: [
         { role: 'system', content: systemPrompt },
-        ...apiMessages.map(m => ({ role: m.role, content: m.content }))
+        ...apiMessages.map(m => ({ role: m.role, content: safeContent(m.content) }))
       ]
     });
 

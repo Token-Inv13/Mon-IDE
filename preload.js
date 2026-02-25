@@ -30,6 +30,9 @@ contextBridge.exposeInMainWorld('electron', {
   createFile: (path) => ipcRenderer.invoke('create-file', path),
   deleteFile: (path) => ipcRenderer.invoke('delete-file', path),
 
+  // Audit logging from renderer
+  auditLog: (level, message, meta) => ipcRenderer.invoke('audit-log', level, message, meta),
+
   // NOUVEAU : Renommer & créer dossier
   renameFile: (oldPath, newPath) => ipcRenderer.invoke('rename-file', oldPath, newPath),
   createFolder: (folderPath) => ipcRenderer.invoke('create-folder', folderPath),
