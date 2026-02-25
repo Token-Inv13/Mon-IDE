@@ -47,7 +47,6 @@
     "win": {
       "target": "nsis",
       "icon": "public/icon.ico",
-      "sign": null,
       "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
     },
     "nsis": {
