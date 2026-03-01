@@ -8,17 +8,29 @@
   "parserOptions": {
     "ecmaVersion": 2021,
     "sourceType": "module",
-    "ecmaFeatures": { "jsx": true }
+    "ecmaFeatures": {
+      "jsx": true
+    }
   },
   "extends": [
-    "eslint:recommended",
-    "plugin:react/recommended"
+    "eslint:recommended"
   ],
-  "settings": { "react": { "version": "detect" } },
   "rules": {
-    "no-console": ["warn", { "allow": ["warn", "error"] }],
-    "react/prop-types": "off",
-    "no-empty": ["error", { "allowEmptyCatch": true }],
-    "react/no-unescaped-entities": "off"
+    "no-console": [
+      "warn",
+      {
+        "allow": [
+          "warn",
+          "error"
+        ]
+      }
+    ],
+    "no-empty": [
+      "error",
+      {
+        "allowEmptyCatch": true
+      }
+    ],
+    "no-unused-vars": "off"
   }
 }

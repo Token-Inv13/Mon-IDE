@@ -115,7 +115,7 @@ Instructions :
             );
 
             window.electron?.auditLog && window.electron.auditLog('info', 'Agent tool_use', { tool: block.name, input: safeContent(block.input) });
-            const toolResult = await executeTool(block.name, block.input, { addLog, onFileUpdate, activeFile });
+            const toolResult = await executeTool(block.name, block.input, { addLog, onFileUpdate, activeFile, projectPath });
             window.electron?.auditLog && window.electron.auditLog('info', 'Agent tool_result', { tool: block.name, result: safeContent(toolResult) });
             const resultOutput = (toolResult && toolResult.output !== undefined && toolResult.output !== null)
               ? toolResult.output

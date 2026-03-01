@@ -42,7 +42,10 @@ export default function Terminal({ isVisible, projectPath }) {
         fitAddonRef.current = fitAddon;
 
         // Passer le projectPath au terminal
-        await window.electron.terminalStart(projectPath);
+        const startRes = await window.electron.terminalStart(projectPath);
+        if (startRes && typeof startRes === 'object' && startRes.ok === false) {
+          throw new Error(startRes.error || 'Impossible de démarrer le terminal');
+        }
         setIsStarted(true);
 
         window.electron.onTerminalData((data) => {

@@ -9,6 +9,87 @@ const projectMemoryPath = path.join(app.getPath('userData'), 'project_memory.jso
 const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5 MB
 const MAX_LOG_BACKUPS = 5;
 
+const fileIndexCache = new Map();
+
+function normalizeKey(p) {
+  return (p || '').toString().toLowerCase();
+}
+
+function buildFileIndex(projectPath) {
+  const root = (projectPath || '').toString();
+  if (!root) return [];
+
+  const ignoreDirs = new Set(['node_modules', '.git', 'dist', 'build', '.next', '.monide-trash']);
+  const textExts = new Set(['js', 'jsx', 'ts', 'tsx', 'py', 'html', 'css', 'json', 'md', 'txt', 'yml', 'yaml', 'env', 'sh', 'bat', 'java', 'c', 'cpp', 'h', 'hpp', 'cs', 'go', 'rs', 'php', 'rb', 'sql']);
+
+  const out = [];
+  const stack = [root];
+
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (e) {
+      continue;
+    }
+
+    for (const ent of entries) {
+      if (!ent) continue;
+      if (ignoreDirs.has(ent.name)) continue;
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        stack.push(full);
+      } else {
+        const parts = ent.name.split('.');
+        const ext = parts.length > 1 ? parts[parts.length - 1].toLowerCase() : '';
+        if (!textExts.has(ext)) continue;
+        out.push({ name: ent.name, path: full });
+      }
+    }
+  }
+
+  return out;
+}
+
+async function getOrBuildFileIndex(projectPath) {
+  const key = normalizeKey(projectPath);
+  if (!key) return { files: [], builtAt: null };
+
+  const existing = fileIndexCache.get(key);
+  if (existing?.files && existing?.builtAt && !existing?.buildingPromise) {
+    return { files: existing.files, builtAt: existing.builtAt };
+  }
+
+  if (existing?.buildingPromise) {
+    const files = await existing.buildingPromise;
+    const builtAt = fileIndexCache.get(key)?.builtAt || Date.now();
+    return { files, builtAt };
+  }
+
+  const buildingPromise = (async () => buildFileIndex(projectPath))();
+  fileIndexCache.set(key, { files: existing?.files || [], builtAt: existing?.builtAt || null, buildingPromise });
+
+  try {
+    const files = await buildingPromise;
+    fileIndexCache.set(key, { files, builtAt: Date.now(), buildingPromise: null });
+    return { files, builtAt: fileIndexCache.get(key).builtAt };
+  } catch (e) {
+    fileIndexCache.set(key, { files: [], builtAt: null, buildingPromise: null });
+    throw e;
+  }
+}
+
+function invalidateFileIndex(projectPath) {
+  const key = normalizeKey(projectPath);
+  if (!key) return;
+  fileIndexCache.delete(key);
+}
+
+function invalidateAllFileIndexes() {
+  fileIndexCache.clear();
+}
+
 function log(line) {
   try {
     const out = `[${new Date().toISOString()}] ${String(line)}\n`;
@@ -35,8 +116,6 @@ function log(line) {
     }
 
     fs.appendFileSync(logPath, out, 'utf-8');
-    // Also echo to console for live debugging
-    try { console.log(out.trim()); } catch (e) {}
   } catch (e) {}
 }
 
@@ -187,7 +266,7 @@ ipcMain.handle('save-api-key', (event, key) => {
   const config = getConfig();
   config.apiKey = key;
   saveConfig(config);
-  return true;
+  return { ok: true };
 });
 
 // ── Clés multi-API ────────────────────────────────────────
@@ -195,6 +274,7 @@ ipcMain.handle('get-all-keys', () => {
   const config = getConfig();
   return {
     claude: config.apiKey || '',
+    codex: config.codexKey || '',
     openai: config.openaiKey || '',
     grok: config.grokKey || ''
   };
@@ -202,9 +282,11 @@ ipcMain.handle('get-all-keys', () => {
 
 ipcMain.handle('save-all-keys', (event, keys) => {
   const config = getConfig();
-  if (keys.claude) config.apiKey = keys.claude;
-  if (keys.openai) config.openaiKey = keys.openai;
-  if (keys.grok) config.grokKey = keys.grok;
+  const has = (obj, k) => Object.prototype.hasOwnProperty.call(obj || {}, k);
+  if (has(keys, 'claude')) config.apiKey = (keys.claude || '').toString();
+  if (has(keys, 'codex')) config.codexKey = (keys.codex || '').toString();
+  if (has(keys, 'openai')) config.openaiKey = (keys.openai || '').toString();
+  if (has(keys, 'grok')) config.grokKey = (keys.grok || '').toString();
   saveConfig(config);
   return true;
 });
@@ -349,6 +431,44 @@ ipcMain.handle('read-directory', (event, dirPath) => {
   return readDir(dirPath);
 });
 
+ipcMain.handle('read-directory-v2', (event, dirPath, options) => {
+  const maxDepth = Number.isFinite(options?.maxDepth) ? Math.max(0, Math.floor(options.maxDepth)) : 1;
+  const ignore = Array.isArray(options?.ignore) ? options.ignore.map(x => (x || '').toString()) : ['node_modules', '.git', 'dist', 'build', '.next', '.monide-trash'];
+
+  function readDir(currentPath, depth) {
+    if (depth > maxDepth) return [];
+    try {
+      const items = fs.readdirSync(currentPath, { withFileTypes: true });
+      return items
+        .filter(item => !ignore.includes(item.name))
+        .map(item => {
+          const fullPath = path.join(currentPath, item.name);
+          const isDir = item.isDirectory();
+          return {
+            name: item.name,
+            path: fullPath,
+            isDirectory: isDir,
+            children: isDir && depth < maxDepth ? readDir(fullPath, depth + 1) : null,
+            hasChildren: isDir,
+          };
+        });
+    } catch (e) {
+      return [];
+    }
+  }
+
+  return readDir(dirPath, 1);
+});
+
+ipcMain.handle('get-project-file-index', async (event, projectPath) => {
+  return await getOrBuildFileIndex(projectPath);
+});
+
+ipcMain.handle('invalidate-file-index', (event, projectPath) => {
+  invalidateFileIndex(projectPath);
+  return true;
+});
+
 ipcMain.handle('read-file', (event, filePath) => {
   return fs.readFileSync(filePath, 'utf-8');
 });
@@ -360,6 +480,7 @@ ipcMain.handle('write-file', (event, filePath, content) => {
     const tmp = path.join(dir, `.tmp-${Date.now()}-${path.basename(filePath)}`);
     fs.writeFileSync(tmp, content, 'utf-8');
     fs.renameSync(tmp, filePath);
+    try { invalidateAllFileIndexes(); } catch (e) {}
     return true;
   } catch (e) {
     log(`write-file error: ${e?.message || e}`);
@@ -374,6 +495,7 @@ ipcMain.handle('create-file', (event, filePath) => {
     const tmp = path.join(dir, `.tmp-${Date.now()}-${path.basename(filePath)}`);
     fs.writeFileSync(tmp, '', 'utf-8');
     fs.renameSync(tmp, filePath);
+    try { invalidateAllFileIndexes(); } catch (e) {}
     return true;
   } catch (e) {
     log(`create-file error: ${e?.message || e}`);
@@ -388,49 +510,106 @@ ipcMain.handle('delete-file', (event, filePath) => {
   } else {
     fs.unlinkSync(filePath);
   }
+  try { invalidateAllFileIndexes(); } catch (e) {}
   return true;
+});
+
+ipcMain.handle('trash-file', (event, projectPath, targetPath) => {
+  const proj = (projectPath || '').toString();
+  const target = (targetPath || '').toString();
+  if (!proj || !target) throw new Error('Paramètres invalides');
+
+  const trashRoot = path.join(proj, '.monide-trash');
+  fs.mkdirSync(trashRoot, { recursive: true });
+
+  const base = path.basename(target);
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const destName = `${stamp}__${base}`;
+  const destPath = path.join(trashRoot, destName);
+
+  fs.renameSync(target, destPath);
+  try { invalidateAllFileIndexes(); } catch (e) {}
+  return { ok: true, originalPath: target, trashedPath: destPath };
+});
+
+ipcMain.handle('restore-file', (event, trashedPath, originalPath) => {
+  const src = (trashedPath || '').toString();
+  const dest = (originalPath || '').toString();
+  if (!src || !dest) throw new Error('Paramètres invalides');
+
+  const parent = path.dirname(dest);
+  fs.mkdirSync(parent, { recursive: true });
+  fs.renameSync(src, dest);
+  try { invalidateAllFileIndexes(); } catch (e) {}
+  return { ok: true };
 });
 
 // ── NOUVEAU : Renommer un fichier ou dossier ──────────────
 ipcMain.handle('rename-file', (event, oldPath, newPath) => {
   fs.renameSync(oldPath, newPath);
+  try { invalidateAllFileIndexes(); } catch (e) {}
   return true;
 });
 
 // ── NOUVEAU : Créer un dossier ────────────────────────────
 ipcMain.handle('create-folder', (event, folderPath) => {
   fs.mkdirSync(folderPath, { recursive: true });
+  try { invalidateAllFileIndexes(); } catch (e) {}
   return true;
 });
 
 // ── Terminal ──────────────────────────────────────────────
 const os = require('os');
 
-if (process.platform === 'win32') {
-  process.env.NODE_PTY_DISABLE_CONPTY = '1';
-}
-
 const pty = require('node-pty');
+const { spawn } = require('child_process');
 
 let ptyProcess = null;
 
 ipcMain.handle('terminal-start', (event, projectPath) => {
   const shell = os.platform() === 'win32' ? 'powershell.exe' : 'bash';
 
-  ptyProcess = pty.spawn(shell, [], {
+  if (ptyProcess) {
+    try { ptyProcess.kill(); } catch (e) {}
+    ptyProcess = null;
+  }
+
+  const baseOpts = {
     name: 'xterm-color',
     cols: 80,
     rows: 24,
     cwd: projectPath || process.env.HOME || process.env.USERPROFILE,
     env: process.env,
-    useConpty: false
-  });
+  };
+
+  const trySpawn = (useConpty) => {
+    return pty.spawn(shell, [], {
+      ...baseOpts,
+      ...(os.platform() === 'win32' ? { useConpty } : {}),
+    });
+  };
+
+  try {
+    if (os.platform() === 'win32') {
+      // Prefer ConPTY on Windows (avoids WinPTY AttachConsole issues). Fallback to WinPTY if needed.
+      try {
+        ptyProcess = trySpawn(true);
+      } catch (e) {
+        ptyProcess = trySpawn(false);
+      }
+    } else {
+      ptyProcess = trySpawn(undefined);
+    }
+  } catch (e) {
+    ptyProcess = null;
+    return { ok: false, error: (e?.message || String(e)) };
+  }
 
   ptyProcess.onData((data) => {
     event.sender.send('terminal-data', data);
   });
 
-  return true;
+  return { ok: true };
 });
 
 ipcMain.handle('terminal-input', (event, data) => {
@@ -443,4 +622,33 @@ ipcMain.handle('terminal-resize', (event, cols, rows) => {
 
 ipcMain.handle('terminal-kill', () => {
   if (ptyProcess) { ptyProcess.kill(); ptyProcess = null; }
+});
+
+ipcMain.handle('run-command-capture', async (event, payload) => {
+  const cmd = (payload?.command || '').toString();
+  const cwd = (payload?.cwd || '').toString();
+  if (!cmd.trim()) throw new Error('Commande invalide');
+
+  return await new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+
+    const child = spawn(cmd, {
+      shell: true,
+      cwd: cwd || undefined,
+      env: process.env,
+      windowsHide: true,
+    });
+
+    child.stdout?.on('data', (d) => { stdout += d.toString(); });
+    child.stderr?.on('data', (d) => { stderr += d.toString(); });
+
+    child.on('error', (err) => {
+      resolve({ ok: false, stdout, stderr: (stderr + (err?.message ? ('\n' + err.message) : '')).trim(), exitCode: -1 });
+    });
+
+    child.on('close', (code) => {
+      resolve({ ok: code === 0, stdout, stderr, exitCode: typeof code === 'number' ? code : null });
+    });
+  });
 });

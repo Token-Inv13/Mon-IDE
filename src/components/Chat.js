@@ -20,6 +20,16 @@ const PROVIDERS = [
     ]
   },
   {
+    id: 'codex',
+    name: 'Codex',
+    icon: '🧠',
+    color: '#22c55e',
+    models: [
+      { id: 'gpt-5-codex', name: 'GPT-5 Codex' },
+      { id: 'gpt-5-mini', name: 'GPT-5 Mini' },
+    ]
+  },
+  {
     id: 'openai',
     name: 'ChatGPT',
     icon: '✨',
@@ -64,7 +74,7 @@ const MODES = [
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 const Chat = forwardRef(function Chat({
-  apiKeys = { claude: '', openai: '', grok: '' },
+  apiKeys = { claude: '', codex: '', openai: '', grok: '' },
   activeFile,
   fileContent,
   projectPath,
@@ -306,7 +316,7 @@ const Chat = forwardRef(function Chat({
 
   const canUseImagesForCurrentProvider = () => {
     if (mode === 'agent') return false;
-    if (provider !== 'openai') return false;
+    if (provider !== 'openai' && provider !== 'codex') return false;
     return true;
   };
 
@@ -506,8 +516,9 @@ MEMOIRE MISE A JOUR:`;
 
   async function summarizeWithOpenAI(summaryPrompt) {
     const isGrok = provider === 'grok';
+    const openaiCompatibleKey = provider === 'grok' ? apiKeys?.grok : (provider === 'codex' ? apiKeys?.codex : apiKeys?.openai);
     const client = new OpenAI({
-      apiKey: isGrok ? apiKeys?.grok : apiKeys?.openai,
+      apiKey: openaiCompatibleKey,
       baseURL: isGrok ? 'https://api.x.ai/v1' : 'https://api.openai.com/v1',
       dangerouslyAllowBrowser: true
     });
@@ -706,8 +717,9 @@ MEMOIRE MISE A JOUR:`;
 
   const sendWithOpenAI = async (apiMessages, systemPrompt, isAgent) => {
     const isGrok = provider === 'grok';
+    const openaiCompatibleKey = provider === 'grok' ? apiKeys?.grok : (provider === 'codex' ? apiKeys?.codex : apiKeys?.openai);
     const client = new OpenAI({
-      apiKey: isGrok ? apiKeys?.grok : apiKeys?.openai,
+      apiKey: openaiCompatibleKey,
       baseURL: isGrok ? 'https://api.x.ai/v1' : 'https://api.openai.com/v1',
       dangerouslyAllowBrowser: true
     });
@@ -905,7 +917,7 @@ MEMOIRE MISE A JOUR:`;
     if (pendingImages.length > 0 && !canUseImagesForCurrentProvider()) {
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: `❌ Les images ne sont pas supportées pour ${currentProvider.name} pour l'instant. Passe sur ChatGPT (OpenAI) pour analyser des images.`
+        content: `❌ Les images ne sont pas supportées pour ${currentProvider.name} pour l'instant. Passe sur OpenAI/Codex pour analyser des images.`
       }]);
       return;
     }
@@ -930,7 +942,7 @@ MEMOIRE MISE A JOUR:`;
       const systemPrompt = buildSystemPrompt(finalText);
       const apiMessages = toApiMessages(budgetedMessages);
 
-      if (provider === 'openai' && pendingImages.length > 0) {
+      if ((provider === 'openai' || provider === 'codex') && pendingImages.length > 0) {
         apiMessages[apiMessages.length - 1] = {
           ...apiMessages[apiMessages.length - 1],
           content: buildOpenAIMultimodalUserContent(finalText, pendingImages),
@@ -940,8 +952,7 @@ MEMOIRE MISE A JOUR:`;
       if (provider === 'claude') {
         await sendWithClaude(apiMessages, systemPrompt, mode === 'agent');
       } else {
-        const isAgentMode = mode === 'agent' && provider !== 'grok';
-        await sendWithOpenAI(apiMessages, systemPrompt, isAgentMode);
+        await sendWithOpenAI(apiMessages, systemPrompt, mode === 'agent');
       }
     } catch (error) {
       setMessages(prev => [...prev, { role: 'assistant', content: `❌ Erreur : ${error.message}` }]);
@@ -1286,12 +1297,12 @@ MEMOIRE MISE A JOUR:`;
               borderRadius: 8,
               background: 'transparent',
               border: '1px solid #444',
-              color: (provider === 'openai' && mode !== 'agent') ? '#ddd' : '#666',
+              color: ((provider === 'openai' || provider === 'codex') && mode !== 'agent') ? '#ddd' : '#666',
               cursor: (isLoading || mode === 'agent') ? 'not-allowed' : 'pointer',
               alignSelf: 'stretch',
               fontSize: 16,
             }}
-            title={mode === 'agent' ? 'Images désactivées en mode Agent' : (provider === 'openai' ? 'Joindre une image' : 'Images: OpenAI uniquement pour l’instant')}
+            title={mode === 'agent' ? 'Images désactivées en mode Agent' : ((provider === 'openai' || provider === 'codex') ? 'Joindre une image' : 'Images: OpenAI/Codex uniquement pour l’instant')}
           >📷</button>
 
           <button
@@ -1432,6 +1443,7 @@ export default Chat;
 Chat.propTypes = {
   apiKeys: PropTypes.shape({
     claude: PropTypes.string,
+    codex: PropTypes.string,
     openai: PropTypes.string,
     grok: PropTypes.string,
   }),
@@ -1450,7 +1462,7 @@ Chat.propTypes = {
 };
 
 Chat.defaultProps = {
-  apiKeys: { claude: '', openai: '', grok: '' },
+  apiKeys: { claude: '', codex: '', openai: '', grok: '' },
   activeFile: null,
   fileContent: '',
   projectPath: '',

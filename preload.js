@@ -25,10 +25,15 @@ contextBridge.exposeInMainWorld('electron', {
   // Dossiers et fichiers
   openFolder: () => ipcRenderer.invoke('open-folder'),
   readDirectory: (path) => ipcRenderer.invoke('read-directory', path),
+  readDirectoryV2: (path, options) => ipcRenderer.invoke('read-directory-v2', path, options),
+  getProjectFileIndex: (projectPath) => ipcRenderer.invoke('get-project-file-index', projectPath),
+  invalidateFileIndex: (projectPath) => ipcRenderer.invoke('invalidate-file-index', projectPath),
   readFile: (path) => ipcRenderer.invoke('read-file', path),
   writeFile: (path, content) => ipcRenderer.invoke('write-file', path, content),
   createFile: (path) => ipcRenderer.invoke('create-file', path),
   deleteFile: (path) => ipcRenderer.invoke('delete-file', path),
+  trashFile: (projectPath, path) => ipcRenderer.invoke('trash-file', projectPath, path),
+  restoreFile: (trashedPath, originalPath) => ipcRenderer.invoke('restore-file', trashedPath, originalPath),
 
   // Audit logging from renderer
   auditLog: (level, message, meta) => ipcRenderer.invoke('audit-log', level, message, meta),
@@ -42,6 +47,7 @@ contextBridge.exposeInMainWorld('electron', {
   terminalInput: (data) => ipcRenderer.invoke('terminal-input', data),
   terminalResize: (cols, rows) => ipcRenderer.invoke('terminal-resize', cols, rows),
   terminalKill: () => ipcRenderer.invoke('terminal-kill'),
+  runCommandCapture: (payload) => ipcRenderer.invoke('run-command-capture', payload),
   onTerminalData: (callback) => ipcRenderer.on('terminal-data', (event, data) => callback(data)),
   removeTerminalListeners: () => ipcRenderer.removeAllListeners('terminal-data'),
 });

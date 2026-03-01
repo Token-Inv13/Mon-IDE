@@ -15,6 +15,18 @@ const PROVIDERS = [
     keyPrefix: 'sk-ant'
   },
   {
+    id: 'codex',
+    name: 'Codex',
+    icon: '🧠',
+    color: '#22c55e',
+    models: [
+      { id: 'gpt-5-codex', name: 'GPT-5 Codex' },
+      { id: 'gpt-5-mini', name: 'GPT-5 Mini' },
+    ],
+    keyPlaceholder: 'sk-proj-... (ou sk-...)',
+    keyPrefix: 'sk-'
+  },
+  {
     id: 'openai',
     name: 'ChatGPT',
     icon: '✨',
@@ -23,6 +35,15 @@ const PROVIDERS = [
       { id: 'gpt-4o', name: 'GPT-4o' },
       { id: 'gpt-4o-mini', name: 'GPT-4o Mini' },
       { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
+      { id: 'gpt-5', name: 'GPT-5' },
+      { id: 'gpt-5-mini', name: 'GPT-5 Mini' },
+      { id: 'gpt-5-nano', name: 'GPT-5 Nano' },
+      { id: 'gpt-5.1', name: 'GPT-5.1' },
+      { id: 'gpt-5-codex', name: 'GPT-5 Codex' },
+      { id: 'gpt-5.1-codex', name: 'GPT-5.1 Codex' },
+      { id: 'gpt-5.2-codex', name: 'GPT-5.2 Codex' },
+      { id: 'gpt-4.1', name: 'GPT-4.1' },
+      { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini' },
     ],
     keyPlaceholder: 'sk-...',
     keyPrefix: 'sk-'
@@ -45,6 +66,7 @@ const PROVIDERS = [
 export default function Settings({ isVisible, onClose, onSave, currentSettings }) {
   const [keys, setKeys] = useState({
     claude: '',
+    codex: '',
     openai: '',
     grok: ''
   });
@@ -125,6 +147,10 @@ export default function Settings({ isVisible, onClose, onSave, currentSettings }
               />
             </div>
           ))}
+        </div>
+
+        <div style={{ marginTop: 14, color: '#9ca3af', fontSize: 12, lineHeight: 1.5 }}>
+          💡 Conseil: sélectionne <strong style={{ color: '#22c55e' }}>Codex</strong> dans le chat puis le mode <strong>Agent</strong> pour donner à l'IA un accès complet aux fichiers du projet ouvert (lecture/écriture/exécution de commandes).
         </div>
 
         <div style={{ marginTop: 26, paddingTop: 18, borderTop: '1px solid #333' }}>

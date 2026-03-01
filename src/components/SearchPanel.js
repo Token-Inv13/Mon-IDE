@@ -39,54 +39,72 @@ export default function SearchPanel({ projectPath, onOpenFile, isVisible, onClos
     setSearched(false);
 
     try {
-      // Lister récursivement tous les fichiers texte
-      const tree = await window.electron.readDirectory(projectPath);
-      const textExts = ['js', 'jsx', 'ts', 'tsx', 'py', 'html', 'css', 'json', 'md', 'txt', 'yml', 'yaml', 'env', 'sh', 'bat'];
+      let flatFiles = [];
+      if (window.electron?.getProjectFileIndex) {
+        const idx = await window.electron.getProjectFileIndex(projectPath);
+        flatFiles = Array.isArray(idx?.files) ? idx.files : [];
+      } else {
+        // Fallback: scan récursif
+        const tree = window.electron.readDirectoryV2
+          ? await window.electron.readDirectoryV2(projectPath, { maxDepth: 25 })
+          : await window.electron.readDirectory(projectPath);
 
-      const flatFiles = [];
-      const flatten = (items) => {
-        for (const item of items) {
-          if (item.isDirectory && item.children) {
-            // Ignorer node_modules, .git, dist, build
-            if (!['node_modules', '.git', 'dist', 'build', '.next'].includes(item.name)) {
-              flatten(item.children);
+        const textExts = ['js', 'jsx', 'ts', 'tsx', 'py', 'html', 'css', 'json', 'md', 'txt', 'yml', 'yaml', 'env', 'sh', 'bat'];
+        const acc = [];
+        const flatten = (items) => {
+          for (const item of items) {
+            if (item.isDirectory && item.children) {
+              if (!['node_modules', '.git', 'dist', 'build', '.next', '.monide-trash'].includes(item.name)) {
+                flatten(item.children);
+              }
+            } else if (!item.isDirectory) {
+              const ext = item.name.split('.').pop().toLowerCase();
+              if (textExts.includes(ext)) acc.push(item);
             }
-          } else if (!item.isDirectory) {
-            const ext = item.name.split('.').pop().toLowerCase();
-            if (textExts.includes(ext)) flatFiles.push(item);
           }
-        }
-      };
-      flatten(tree);
+        };
+        flatten(tree);
+        flatFiles = acc;
+      }
 
       // Chercher dans chaque fichier
       const found = [];
       const needle = caseSensitive ? query : query.toLowerCase();
 
-      for (const file of flatFiles) {
-        try {
-          const content = await window.electron.readFile(file.path);
-          const lines = content.split('\n');
-          const matches = [];
+      const concurrency = 8;
+      let cursor = 0;
 
-          lines.forEach((line, idx) => {
-            const haystack = caseSensitive ? line : line.toLowerCase();
-            if (haystack.includes(needle)) {
-              matches.push({
-                lineNumber: idx + 1,
-                line: line.trim(),
-                preview: highlight(line.trim(), query, caseSensitive),
-              });
+      const worker = async () => {
+        while (cursor < flatFiles.length) {
+          const i = cursor++;
+          const file = flatFiles[i];
+          try {
+            const content = await window.electron.readFile(file.path);
+            const lines = content.split('\n');
+            const matches = [];
+
+            lines.forEach((line, idx) => {
+              const haystack = caseSensitive ? line : line.toLowerCase();
+              if (haystack.includes(needle)) {
+                matches.push({
+                  lineNumber: idx + 1,
+                  line: line.trim(),
+                  preview: highlight(line.trim(), query, caseSensitive),
+                });
+              }
+            });
+
+            if (matches.length > 0) {
+              found.push({ file, matches: matches.slice(0, 10), total: matches.length });
             }
-          });
-
-          if (matches.length > 0) {
-            found.push({ file, matches: matches.slice(0, 10), total: matches.length });
+          } catch (e) {
+            // Ignorer les fichiers non lisibles
           }
-        } catch (e) {
-          // Ignorer les fichiers non lisibles
         }
-      }
+      };
+
+      const workers = Array.from({ length: Math.min(concurrency, flatFiles.length) }, () => worker());
+      await Promise.all(workers);
 
       setResults(found);
       setSearched(true);

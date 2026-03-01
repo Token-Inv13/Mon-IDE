@@ -13,9 +13,9 @@ import React, { useEffect, useState } from 'react';
 export function useToast() {
   const [toasts, setToasts] = useState([]);
 
-  const addToast = (message, type = 'info', duration = 3000) => {
+  const addToast = (message, type = 'info', duration = 3000, action = null) => {
     const id = Date.now() + Math.random();
-    setToasts(prev => [...prev, { id, message, type, duration }]);
+    setToasts(prev => [...prev, { id, message, type, duration, action }]);
     if (duration > 0) {
       setTimeout(() => removeToast(id), duration);
     }
@@ -78,6 +78,28 @@ function Toast({ toast, onRemove }) {
     >
       <span style={{ fontSize: 16, flexShrink: 0 }}>{icons[toast.type] || 'ℹ️'}</span>
       <span style={{ flex: 1, lineHeight: 1.4, color: c.text }}>{toast.message}</span>
+
+      {toast.action?.label && typeof toast.action?.onClick === 'function' && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            try { toast.action.onClick(); } finally { onRemove(toast.id); }
+          }}
+          style={{
+            background: 'transparent',
+            border: `1px solid ${c.border}`,
+            color: c.text,
+            borderRadius: 8,
+            padding: '4px 8px',
+            cursor: 'pointer',
+            fontSize: 12,
+            flexShrink: 0,
+          }}
+        >
+          {toast.action.label}
+        </button>
+      )}
+
       <button
         onClick={(e) => { e.stopPropagation(); onRemove(toast.id); }}
         style={{

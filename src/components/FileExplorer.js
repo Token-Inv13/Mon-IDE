@@ -74,12 +74,73 @@ function ContextMenu({ x, y, item, onRename, onDelete, onNewFile, onNewFolder, o
   );
 }
 
-function FileItem({ item, onFileClick, activeFile, selectedPath, onSelectItem, depth = 0, onRefresh, dirtyPaths = [], addToast }) {
+function TextPromptModal({ title, defaultValue, onCancel, onSubmit }) {
+  const [value, setValue] = useState((defaultValue || '').toString());
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const el = document.getElementById('monide-text-prompt-input-explorer');
+      el && el.focus && el.focus();
+      el && el.select && el.select();
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ width: 460, background: '#1e1e2e', border: '1px solid #333', borderRadius: 12, padding: 18, boxShadow: '0 12px 40px rgba(0,0,0,0.65)' }}>
+        <div style={{ color: '#fff', fontWeight: 'bold', fontSize: 14, marginBottom: 10 }}>{title}</div>
+        <input
+          id="monide-text-prompt-input-explorer"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') onCancel?.();
+            if (e.key === 'Enter') onSubmit?.(value);
+          }}
+          style={{ width: '100%', background: '#151515', border: '1px solid #333', color: '#ddd', borderRadius: 8, padding: '10px 12px', fontSize: 12, outline: 'none', boxSizing: 'border-box' }}
+        />
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 14 }}>
+          <button onClick={() => onCancel?.()} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #444', background: 'transparent', color: '#aaa', cursor: 'pointer', fontSize: 12 }}>
+            Annuler
+          </button>
+          <button onClick={() => onSubmit?.(value)} style={{ padding: '8px 12px', borderRadius: 8, border: 'none', background: '#7c3aed', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>
+            OK
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FileItem({ item, onFileClick, activeFile, selectedPath, onSelectItem, projectPath, onLoadChildren, depth = 0, onRefresh, dirtyPaths = [], addToast }) {
   const [isOpen, setIsOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState(null);
   const [isRenaming, setIsRenaming] = useState(false);
   const [newName, setNewName] = useState(item.name);
   const renameInputRef = useRef(null);
+
+  const [textPrompt, setTextPrompt] = useState({
+    isOpen: false,
+    title: '',
+    defaultValue: '',
+    resolve: null,
+  });
+
+  const askText = (title, defaultValue = '') => {
+    return new Promise((resolve) => {
+      setTextPrompt({ isOpen: true, title, defaultValue, resolve });
+    });
+  };
+
+  const closePrompt = (value) => {
+    setTextPrompt(prev => {
+      try {
+        if (typeof prev.resolve === 'function') prev.resolve(value);
+      } catch (e) {}
+      return { isOpen: false, title: '', defaultValue: '', resolve: null };
+    });
+  };
 
   const isActive = activeFile && activeFile.path === item.path;
   const isSelected = selectedPath && selectedPath === item.path;
@@ -129,8 +190,19 @@ function FileItem({ item, onFileClick, activeFile, selectedPath, onSelectItem, d
   const handleDelete = async () => {
     if (!window.confirm(`Supprimer « ${item.name} » ?`)) return;
     try {
-      await window.electron.deleteFile(item.path);
-      addToast?.(`« ${item.name} » supprimé`, 'warning');
+      if (window.electron?.trashFile && window.electron?.restoreFile && projectPath) {
+        const res = await window.electron.trashFile(projectPath, item.path);
+        addToast?.(`« ${item.name} » déplacé vers la corbeille`, 'warning', 6500, {
+          label: 'Annuler',
+          onClick: async () => {
+            await window.electron.restoreFile(res.trashedPath, res.originalPath);
+            onRefresh?.();
+          }
+        });
+      } else {
+        await window.electron.deleteFile(item.path);
+        addToast?.(`« ${item.name} » supprimé`, 'warning');
+      }
       onRefresh?.();
     } catch (err) {
       addToast?.(`Erreur : ${err.message}`, 'error');
@@ -138,12 +210,12 @@ function FileItem({ item, onFileClick, activeFile, selectedPath, onSelectItem, d
   };
 
   const handleNewFile = async () => {
-    const name = window.prompt('Nom du nouveau fichier :');
-    if (!name?.trim()) return;
-    const newPath = item.path + '\\' + name.trim();
+    const name = ((await askText('Nom du nouveau fichier :')) || '').toString().trim();
+    if (!name) return;
+    const newPath = item.path + '\\' + name;
     try {
       await window.electron.createFile(newPath);
-      addToast?.(`Fichier « ${name.trim()} » créé`, 'success');
+      addToast?.(`Fichier « ${name} » créé`, 'success');
       onRefresh?.();
     } catch (err) {
       addToast?.(`Erreur : ${err.message}`, 'error');
@@ -151,12 +223,12 @@ function FileItem({ item, onFileClick, activeFile, selectedPath, onSelectItem, d
   };
 
   const handleNewFolder = async () => {
-    const name = window.prompt('Nom du nouveau dossier :');
-    if (!name?.trim()) return;
-    const newPath = item.path + '\\' + name.trim();
+    const name = ((await askText('Nom du nouveau dossier :')) || '').toString().trim();
+    if (!name) return;
+    const newPath = item.path + '\\' + name;
     try {
       await window.electron.createFolder(newPath);
-      addToast?.(`Dossier « ${name.trim()} » créé`, 'success');
+      addToast?.(`Dossier « ${name} » créé`, 'success');
       onRefresh?.();
     } catch (err) {
       addToast?.(`Erreur : ${err.message}`, 'error');
@@ -165,12 +237,26 @@ function FileItem({ item, onFileClick, activeFile, selectedPath, onSelectItem, d
 
   return (
     <div>
+      {textPrompt.isOpen && (
+        <TextPromptModal
+          title={textPrompt.title}
+          defaultValue={textPrompt.defaultValue}
+          onCancel={() => closePrompt(null)}
+          onSubmit={(val) => closePrompt(val)}
+        />
+      )}
       <div
         onContextMenu={handleRightClick}
-        onClick={() => {
+        onClick={async () => {
           if (isRenaming) return;
           onSelectItem?.(item);
-          if (item.isDirectory) setIsOpen(!isOpen);
+          if (item.isDirectory) {
+            const nextOpen = !isOpen;
+            setIsOpen(nextOpen);
+            if (nextOpen) {
+              await onLoadChildren?.(item);
+            }
+          }
           else onFileClick(item);
         }}
         style={{
@@ -226,6 +312,8 @@ function FileItem({ item, onFileClick, activeFile, selectedPath, onSelectItem, d
               activeFile={activeFile}
               selectedPath={selectedPath}
               onSelectItem={onSelectItem}
+              projectPath={projectPath}
+              onLoadChildren={onLoadChildren}
               depth={depth + 1}
               onRefresh={onRefresh}
               dirtyPaths={dirtyPaths}
@@ -251,7 +339,7 @@ function FileItem({ item, onFileClick, activeFile, selectedPath, onSelectItem, d
   );
 }
 
-export default function FileExplorer({ files, onFileClick, activeFile, onRefresh, dirtyPaths = [], addToast, selectedItem, onSelectItem }) {
+export default function FileExplorer({ files, onFileClick, activeFile, onRefresh, dirtyPaths = [], addToast, projectPath, selectedItem, onSelectItem, onLoadChildren }) {
   const selectedPath = selectedItem?.path || null;
   return (
     <div style={{ padding: '8px 4px', height: '100%', overflow: 'auto' }}>
@@ -285,6 +373,8 @@ export default function FileExplorer({ files, onFileClick, activeFile, onRefresh
             activeFile={activeFile}
             selectedPath={selectedPath}
             onSelectItem={onSelectItem}
+            projectPath={projectPath}
+            onLoadChildren={onLoadChildren}
             onRefresh={onRefresh}
             dirtyPaths={dirtyPaths}
             addToast={addToast}
