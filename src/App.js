@@ -9,7 +9,7 @@ import ToastContainer, { useToast } from './components/Toast';
 import CommandPalette from './components/CommandPalette';
 import FileUpdatePreviewModal from './components/FileUpdatePreviewModal';
 import NotesPanel from './components/NotesPanel';
-import Editor from '@monaco-editor/react';
+import FileControlPanel from './components/FileControlPanel';
 
 export default function App() {
 
@@ -55,7 +55,7 @@ export default function App() {
 
   const [apiKey, setApiKey] = useState('');
   const [apiKeySaved, setApiKeySaved] = useState(false);
-  const [apiKeys, setApiKeys] = useState({ claude: '', openai: '', grok: '' });
+  const [apiKeys, setApiKeys] = useState({ claude: '', codex: '', openai: '', grok: '' });
   const [showSettings, setShowSettings] = useState(false);
   const [projectPath, setProjectPath] = useState(null);
   const [files, setFiles] = useState([]);
@@ -63,13 +63,14 @@ export default function App() {
   const [activeFile, setActiveFile] = useState(null);
   const [fileContent, setFileContent] = useState('');
   const [dirtyPaths, setDirtyPaths] = useState([]);
+  const [selectedItem, setSelectedItem] = useState(null);
   const [showTerminal, setShowTerminal] = useState(false);
   const [showActions, setShowActions] = useState(false);
   const [terminalHeight, setTerminalHeight] = useState(250);
   const [showPalette, setShowPalette] = useState(false);
   const [pendingFileUpdate, setPendingFileUpdate] = useState(null);
-  const [chatProvider, setChatProvider] = useState('claude');
-  const [chatModel, setChatModel] = useState('claude-sonnet-4-6');
+  const [chatProvider, setChatProvider] = useState('codex');
+  const [chatModel, setChatModel] = useState('gpt-5-codex');
   const [chatBudget, setChatBudget] = useState(null);
   const [showNotes, setShowNotes] = useState(false);
   const [notesText, setNotesText] = useState('');
@@ -85,10 +86,10 @@ export default function App() {
           setApiKey(keys.claude);
           setApiKeySaved(true);
         }
-        setApiKeys(keys || { claude: '', openai: '', grok: '' });
+        setApiKeys(keys || { claude: '', codex: '', openai: '', grok: '' });
       }).catch(err => {
         console.error('Error loading API keys:', err);
-        setApiKeys({ claude: '', openai: '', grok: '' });
+        setApiKeys({ claude: '', codex: '', openai: '', grok: '' });
       });
       return;
     }
@@ -100,9 +101,9 @@ export default function App() {
         setApiKey(keys.claude);
         setApiKeySaved(true);
       }
-      setApiKeys(keys || { claude: '', openai: '', grok: '' });
+      setApiKeys(keys || { claude: '', codex: '', openai: '', grok: '' });
     } catch (e) {
-      setApiKeys({ claude: '', openai: '', grok: '' });
+      setApiKeys({ claude: '', codex: '', openai: '', grok: '' });
     }
   }, []);
 
@@ -133,7 +134,9 @@ export default function App() {
 
         if (uiState.projectPath && window.electron?.readDirectory) {
           setProjectPath(uiState.projectPath);
-          const tree = await window.electron.readDirectory(uiState.projectPath);
+          const tree = window.electron.readDirectoryV2
+            ? await window.electron.readDirectoryV2(uiState.projectPath, { maxDepth: 1 })
+            : await window.electron.readDirectory(uiState.projectPath);
           setFiles(tree);
         }
 
@@ -207,7 +210,9 @@ export default function App() {
       const path = await window.electron.openFolder();
       if (path) {
         setProjectPath(path);
-        const tree = await window.electron.readDirectory(path);
+        const tree = window.electron.readDirectoryV2
+          ? await window.electron.readDirectoryV2(path, { maxDepth: 1 })
+          : await window.electron.readDirectory(path);
         setFiles(tree);
       }
     } catch (err) {
@@ -228,8 +233,33 @@ export default function App() {
 
   const refreshTree = async () => {
     if (!projectPath) return;
-    const tree = await window.electron.readDirectory(projectPath);
+    const tree = window.electron.readDirectoryV2
+      ? await window.electron.readDirectoryV2(projectPath, { maxDepth: 1 })
+      : await window.electron.readDirectory(projectPath);
     setFiles(tree);
+  };
+
+  const updateTreeNode = (items, targetPath, updater) => {
+    return (items || []).map(it => {
+      if (it.path === targetPath) return updater(it);
+      if (it.isDirectory && it.children && it.children.length > 0) {
+        return { ...it, children: updateTreeNode(it.children, targetPath, updater) };
+      }
+      return it;
+    });
+  };
+
+  const loadChildren = async (dirItem) => {
+    if (!dirItem?.isDirectory) return;
+    if (!projectPath) return;
+    if (!window.electron?.readDirectoryV2) return;
+    if (dirItem.childrenLoaded) return;
+    try {
+      const children = await window.electron.readDirectoryV2(dirItem.path, { maxDepth: 1 });
+      setFiles(prev => updateTreeNode(prev, dirItem.path, (node) => ({ ...node, children, childrenLoaded: true })));
+    } catch (e) {
+      addToast(`Erreur: ${e?.message || e}`, 'error');
+    }
   };
 
   useEffect(() => {
@@ -367,6 +397,7 @@ export default function App() {
     const content = await window.electron.readFile(file.path);
     setActiveFile(file);
     setFileContent(content);
+    setSelectedItem(file);
     setTabs(prev => {
       if (prev.some(t => t.path === file.path)) return prev;
       return [...prev, { path: file.path, name: file.name, isDirty: dirtyPaths.includes(file.path) }];
@@ -515,7 +546,7 @@ export default function App() {
           onClose={() => setShowSettings(false)}
           currentSettings={{ keys: apiKeys, budget: chatBudget }}
           onSave={async (payload) => {
-            const nextKeys = payload?.keys || payload || { claude: '', openai: '', grok: '' };
+            const nextKeys = payload?.keys || payload || { claude: '', codex: '', openai: '', grok: '' };
             const nextBudget = payload?.budget || null;
 
             if (window.electron?.saveAllKeys) {
@@ -542,6 +573,13 @@ export default function App() {
 
         {/* Sidebar fichiers */}
         <div style={styles.sidebar}>
+          <FileControlPanel
+            projectPath={projectPath}
+            selectedItem={selectedItem}
+            onOpenFile={openFile}
+            onRefresh={refreshTree}
+            addToast={addToast}
+          />
           <FileExplorer
             files={files}
             onFileClick={handleFileClick}
@@ -549,6 +587,10 @@ export default function App() {
             onRefresh={refreshTree}
             dirtyPaths={dirtyPaths}
             addToast={addToast}
+            projectPath={projectPath}
+            selectedItem={selectedItem}
+            onSelectItem={(it) => setSelectedItem(it)}
+            onLoadChildren={loadChildren}
           />
         </div>
 
@@ -579,25 +621,33 @@ export default function App() {
           />
           <div style={{ flex: 1, overflow: 'hidden' }}>
             {activeFile ? (
-              <Editor
-                height="100%"
-                language={getLanguage(activeFile.name)}
+              <textarea
                 value={fileContent}
-                onChange={val => {
-                  const nextVal = val ?? '';
+                onChange={e => {
+                  const nextVal = e.target.value ?? '';
                   setFileContent(nextVal);
                   if (activeFile) {
                     setDirtyPaths(prev => prev.includes(activeFile.path) ? prev : [...prev, activeFile.path]);
                     setTabs(prev => prev.map(t => t.path === activeFile.path ? { ...t, isDirty: true } : t));
                   }
                 }}
-                theme="vs-dark"
-                options={{
+                spellCheck={false}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  border: 'none',
+                  outline: 'none',
+                  resize: 'none',
+                  boxSizing: 'border-box',
+                  padding: 12,
+                  background: '#1e1e1e',
+                  color: '#d4d4d4',
+                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
                   fontSize: 14,
-                  minimap: { enabled: true },
-                  wordWrap: 'on',
-                  automaticLayout: true,
+                  lineHeight: 1.5,
+                  whiteSpace: 'pre',
                 }}
+                aria-label={`Éditeur ${getLanguage(activeFile.name)}`}
               />
             ) : (
               <div style={styles.emptyEditor}>

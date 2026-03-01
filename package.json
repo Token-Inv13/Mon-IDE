@@ -8,14 +8,15 @@
     "react-start": "react-scripts start",
     "electron-start": "electron .",
     "start": "concurrently \"npm run react-start\" \"wait-on http://localhost:3000 && npm run electron-start\"",
-    "lint": "npx eslint \"src/**\" --ext .js,.jsx",
-    "lint:fix": "npx eslint \"src/**\" --ext .js,.jsx --fix",
+    "lint": "node -e \"const {spawnSync}=require('child_process');const r=spawnSync('npx',['eslint','src/**','--ext','.js,.jsx'],{stdio:'inherit',shell:true,env:{...process.env,ESLINT_USE_FLAT_CONFIG:'false'}});process.exit(r.status ?? 1);\"",
+    "lint:fix": "node -e \"const {spawnSync}=require('child_process');const r=spawnSync('npx',['eslint','src/**','--ext','.js,.jsx','--fix'],{stdio:'inherit',shell:true,env:{...process.env,ESLINT_USE_FLAT_CONFIG:'false'}});process.exit(r.status ?? 1);\"",
     "test": "react-scripts test --env=jsdom --watchAll=false --passWithNoTests",
     "build": "react-scripts build",
     "package": "npm run clean:dist && npm run build && electron-builder build --win",
     "clean:dist": "node -e require('fs').rmSync('dist',{recursive:true,force:true})",
     "package:win": "npm run clean:dist && npm run build && electron-builder --win --x64",
-    "package:win:dir": "npm run clean:dist && npm run build && electron-builder --win --x64 --dir"
+    "package:win:dir": "npm run clean:dist && npm run build && electron-builder --win --x64 --dir",
+    "package:win:portable": "npm run clean:dist && npm run build && electron-builder --win portable --x64"
   },
   "browserslist": {
     "production": [
@@ -71,7 +72,6 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
-    "@monaco-editor/react": "^4.7.0",
     "@testing-library/dom": "^10.4.1",
     "ajv": "^8.18.0",
     "node-pty": "^1.0.0",
